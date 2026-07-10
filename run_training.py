@@ -44,9 +44,10 @@ from torch import optim
 from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
 
 from video_datasets import VideoDataset, load_dataset, dataset_split
-from utils import transform_stats, compose_data_transforms, compose_dataloaders
+from utils import transform_stats, compose_data_transforms, train_val_dloaders
 from models import LRCN
 from train import train
+import numpy as np
 
 def args_parser():
     """
@@ -137,17 +138,58 @@ def trainer(args):
     vid_dataset, label_dict = load_dataset(frame_dir)
     tr_split, val_split, ts_split = dataset_split(vid_dataset, tr_size, ts_size)
 
+
+    splits = {
+    "train": np.array(tr_split, dtype=object),
+    "val": np.array(val_split, dtype=object),
+    "test": np.array(ts_split, dtype=object),
+}
+
+    np.save("splits.npy", splits)
+
+    train_paths = {path for path, _ in tr_split}
+    val_paths = {path for path, _ in val_split}
+    test_paths = {path for path, _ in ts_split}
+
+    assert train_paths.isdisjoint(val_paths)
+    assert train_paths.isdisjoint(test_paths)
+    assert val_paths.isdisjoint(test_paths)
+
+    print("Dataset splits are disjoint. No overlap detected.")
+
     # Load image transformation statistics and compose data augmentation transforms
     h, w, mean, std = transform_stats(model_type)
     tr_transforms, val_ts_transforms = compose_data_transforms(h, w, mean, std)
 
     # Create PyTorch Datasets for each split
-    tr_dataset = VideoDataset(tr_split, fr_per_vid, tr_transforms)
-    val_dataset = VideoDataset(val_split, fr_per_vid, val_ts_transforms)
-    ts_dataset = VideoDataset(ts_split, fr_per_vid, val_ts_transforms)
+    # tr_dataset = VideoDataset(tr_split, fr_per_vid, tr_transforms)
+    # val_dataset = VideoDataset(val_split, fr_per_vid, val_ts_transforms)
+    # ts_dataset = VideoDataset(ts_split, fr_per_vid, val_ts_transforms)
 
-    # Compose DataLoaders for training, validation, and test using a custom function
-    dataloaders = compose_dataloaders(tr_dataset, val_dataset, ts_dataset, batch_size, model_type)
+    # # Compose DataLoaders for training, validation, and test using a custom function
+    # dataloaders = compose_dataloaders(tr_dataset, val_dataset, ts_dataset, batch_size, model_type)
+
+    tr_dataset = VideoDataset(
+        tr_split,
+        fr_per_vid,
+        tr_transforms,
+    )
+
+    val_dataset = VideoDataset(
+        val_split,
+        fr_per_vid,
+        val_ts_transforms,
+    )
+
+    dataloaders = train_val_dloaders(
+        tr_dataset,
+        val_dataset,
+        batch_size,
+        model_type,
+    )
+
+
+
 
     # Initialize the LRCN model with the specified parameters
     model = LRCN(hidden_size=rnn_hidden_size, n_layers=rnn_n_layers, dropout_rate=dropout,

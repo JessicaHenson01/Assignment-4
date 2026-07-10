@@ -89,7 +89,13 @@ class LRCN(nn.Module):
         self.base_model = base_cnn
 
         # Define the LSTM to process the sequence of frame features.
-        self.rnn = nn.LSTM(num_features, hidden_size, n_layers)
+        self.rnn = nn.LSTM( # REPLACED
+            input_size=num_features,
+            hidden_size=hidden_size,
+            num_layers=n_layers,
+            batch_first=True,
+            dropout=dropout_rate if n_layers > 1 else 0.0,
+        )
         
         # Define dropout for regularization.
         self.dropout = nn.Dropout(dropout_rate)
@@ -115,20 +121,35 @@ class LRCN(nn.Module):
             Tensor: Output logits for each sample in the batch with shape (batch_size, n_classes).
         """
         bs, ts, c, h, w = x.shape  # batch_size, time_steps, channels, height, width
+
+        frames = x.reshape(
+            bs * ts,
+            c,
+            h,
+            w,
+        )
+
+        features = self.base_model(frames)
+        features = features.reshape(bs, ts, -1)
+        rnn_output, _ = self.rnn(features)
+        findal_features = rnn_output[:, -1, :]
+
+        findal_features = self.dropout(findal_features)
+        return self.fc(findal_features)
         
-        # Process the first frame separately to initialize the LSTM hidden and cell states.
-        idx = 0
-        y = self.base_model(x[:, idx])
-        _, (hn, cn) = self.rnn(y.unsqueeze(1))
+        # # Process the first frame separately to initialize the LSTM hidden and cell states.
+        # idx = 0
+        # y = self.base_model(x[:, idx])
+        # _, (hn, cn) = self.rnn(y.unsqueeze(1))
         
-        # Iterate over the remaining frames, feeding each frame's features into the LSTM.
-        for idx in range(1, ts):
-            y = self.base_model(x[:, idx])
-            out, (hn, cn) = self.rnn(y.unsqueeze(1), (hn, cn))
+        # # Iterate over the remaining frames, feeding each frame's features into the LSTM.
+        # for idx in range(1, ts):
+        #     y = self.base_model(x[:, idx])
+        #     out, (hn, cn) = self.rnn(y.unsqueeze(1), (hn, cn))
         
-        # Apply dropout to the output of the final time step.
-        out = self.dropout(out[:, -1])
+        # # Apply dropout to the output of the final time step.
+        # out = self.dropout(out[:, -1])
         
-        # Pass the final output through the fully-connected layer to get class logits.
-        out = self.fc(out)
-        return out
+        # # Pass the final output through the fully-connected layer to get class logits.
+        # out = self.fc(out)
+        # return out

@@ -95,13 +95,14 @@ class LRCN(nn.Module):
             num_layers=n_layers,
             batch_first=True,
             dropout=dropout_rate if n_layers > 1 else 0.0,
+            bidirectional=True,
         )
         
         # Define dropout for regularization.
         self.dropout = nn.Dropout(dropout_rate)
         
         # Final fully-connected layer to produce logits for each class.
-        self.fc = nn.Linear(hidden_size, n_classes)
+        self.fc = nn.Linear(hidden_size * 2, n_classes)
 
     def forward(self, x):
         """

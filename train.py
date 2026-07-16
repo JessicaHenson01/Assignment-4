@@ -18,6 +18,18 @@ import os
 import copy
 from tqdm import tqdm
 import torch
+import wandb
+
+wandb.init(
+    project="assignment-4-video-action-recognition",
+    job_type="evaluation",
+)
+
+wandb.log(
+    {
+        "test/accuracy": test_accuracy,
+    }
+)
 
 def train(dataloaders, model, criterion, optimizer, scheduler, device, optim_model_wts_dir, n_epochs=30):
     """
@@ -80,6 +92,16 @@ def train(dataloaders, model, criterion, optimizer, scheduler, device, optim_mod
             print('Loading best model weights!')
             model.load_state_dict(best_model_wts)
 
+        wandb.log(
+            {
+                "epoch": epoch + 1,
+                "train/loss": train_loss,
+                "train/accuracy": train_accuracy,
+                "val/loss": val_loss,
+                "val/accuracy": val_accuracy,
+                "learning_rate": get_learning_rate(optimizer),
+            }
+        )
         print("train loss: {:.6f}, val loss: {:.6f}, accuracy: {:.2f}".format(train_loss, val_loss, 100*val_accuracy))
         print("-" * 60)
         print()

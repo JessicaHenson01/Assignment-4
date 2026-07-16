@@ -37,22 +37,37 @@ def test(model, dataloader, device):
                                 to the total number of samples.
     """
     model.eval()
+    total_correct_preds = 0
+    running_loss = 0.0
+    len_dataset = len(dataloader.dataset)
+    targets, outputs = [], []
+
     with torch.no_grad():
-        total_correct_preds = 0.0
-        len_dataset = len(dataloader.dataset)
-        targets, outputs = [], []
         for x_batch, y_batch in tqdm(dataloader):
-            x_batch, y_batch = x_batch.to(device), y_batch.to(device)
-            output = model(x_batch)
-            pred = output.argmax(dim=1, keepdim=True)
-            correct_preds = pred.eq(y_batch.view_as(pred)).sum().item()
-            total_correct_preds += correct_preds
-            outputs.extend(pred.view(-1).detach().cpu().numpy().tolist())
-            targets.extend(y_batch.detach().cpu().numpy().tolist())
-        
-        accuracy = total_correct_preds / float(len_dataset)
-    
-    return targets, outputs, accuracy
+            x_batch = x_batch.to(device)
+            y_batch = y_batch.to(device)
+
+            logits = model(x_batch)
+
+            loss = criterion(logits, y_batch)
+            running_loss += loss.item() * x_batch.size(0)
+
+            predictions = logits.argmax(dim=1)
+            total_correct_preds += (
+                predictions == y_batch
+            ).sum().item()
+
+            outputs.extend(
+                predictions.detach().cpu().numpy().tolist()
+            )
+            targets.extend(
+                y_batch.detach().cpu().numpy().tolist()
+            )
+
+    test_loss = running_loss / len_dataset
+    accuracy = total_correct_preds / len_dataset
+
+    return targets, outputs, test_loss, accuracy
 
 def get_test_report(target, output, target_names):
     """

@@ -31,6 +31,7 @@ from torch import optim
 from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
 
 import numpy as np
+import wandb
 
 from video_datasets import VideoDataset, load_dataset, dataset_split
 from utils import transform_stats, compose_data_transforms, train_val_dloaders, test_dloaders
@@ -170,6 +171,20 @@ def main(args):
         os.makedirs("./models", exist_ok=True)
         optim_model_dir = './models'
 
+        wandb.init(
+            project="assignment-4-video-action-recognition",
+            config={
+                "backbone": args.cnn_backbone,
+                "frames_per_video": args.fr_per_vid,
+                "hidden_size": args.rnn_hidden_size,
+                "lstm_layers": args.rnn_n_layers,
+                "dropout": args.dropout,
+                "batch_size": args.batch_size,
+                "learning_rate": args.learning_rate,
+                "epochs": args.n_epochs,
+            },
+        )
+
         # Main training procedure
         model.to(device)
         model, loss_hist, acc_hist = train(dataloaders, model, loss_func, opt, lr_scheduler, device, optim_model_dir, n_epochs)
@@ -187,7 +202,17 @@ def main(args):
         # Load the trained model checkpoint
         model.load_state_dict(torch.load(args.ckpt, map_location=device))
         model.to(device)
-        targets, outputs, accuracy = test(model, dataloaders['test'], device)
+        criterion = torch.nn.CrossEntropyLoss()
+
+        targets, outputs, test_loss, test_accuracy = test(
+            model,
+            dataloaders["test"],
+            device,
+            criterion,
+        )
+
+        print(f"Test loss: {test_loss:.6f}")
+        print(f"Test accuracy: {test_accuracy * 100:.2f}%")
 
         print('The overall test accuracy is {:.4f}%.'.format(100 * accuracy))
         # Optionally, generate a detailed test report or confusion matrix:

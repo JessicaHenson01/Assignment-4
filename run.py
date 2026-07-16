@@ -211,10 +211,32 @@ def main(args):
             criterion,
         )
 
+        wandb.init(
+            project="assignment-4-video-action-recognition",
+            job_type="evaluation",
+            config={
+                "checkpoint": args.ckpt,
+                "backbone": args.cnn_backbone,
+                "frames_per_video": args.fr_per_vid,
+                "hidden_size": args.rnn_hidden_size,
+                "lstm_layers": args.rnn_n_layers,
+                "dropout": args.dropout,
+            },
+        )
+
+        wandb.log(
+            {
+                "test/loss": test_loss,
+                "test/accuracy": test_accuracy,
+            }
+        )
+
+        wandb.finish()
+
         print(f"Test loss: {test_loss:.6f}")
         print(f"Test accuracy: {test_accuracy * 100:.2f}%")
 
-        print('The overall test accuracy is {:.4f}%.'.format(100 * accuracy))
+        print('The overall test accuracy is {:.4f}%.'.format(100 * test_accuracy))
         # Optionally, generate a detailed test report or confusion matrix:
         # print(get_test_report(targets, outputs, all_cats))
         # print(get_confusion_matrix(targets, outputs, labels_dict, all_cats))

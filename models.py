@@ -13,6 +13,7 @@ Classes:
           fully-connected layer to produce class logits.
 """
 
+import torch
 import torch.nn as nn
 from torchvision import models
 
@@ -77,7 +78,7 @@ class LRCN(nn.Module):
             base_cnn = models.resnet101(pretrained=pretrained)
         elif cnn_model == 'resnet152':
             # Note: This example uses resnet34 for resnet152 option as a placeholder.
-            base_cnn = models.resnet34(pretrained=pretrained)
+            base_cnn = models.resnet152(pretrained=pretrained)
         else:
             raise ValueError('The input CNN backbone is not supported, please choose a valid ResNet variant.')
 
@@ -132,12 +133,24 @@ class LRCN(nn.Module):
 
         features = self.base_model(frames)
         features = features.reshape(bs, ts, -1)
-        rnn_output, _ = self.rnn(features)
-        findal_features = rnn_output[:, -1, :]
 
-        findal_features = self.dropout(findal_features)
-        return self.fc(findal_features)
-        
+
+        _, (hidden_state, _) = self.rnn(features)
+
+        # For a bidirectional LSTM, the final two hidden states are:
+        # hidden_state[-2] = final forward hidden state
+        # hidden_state[-1] = final backward hidden state
+        forward_hidden = hidden_state[-2]
+        backward_hidden = hidden_state[-1]
+
+        final_features = torch.cat(
+            (forward_hidden, backward_hidden),
+            dim=1,
+        )
+
+        final_features = self.dropout(final_features)
+        return self.fc(final_features)
+                
         # # Process the first frame separately to initialize the LSTM hidden and cell states.
         # idx = 0
         # y = self.base_model(x[:, idx])

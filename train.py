@@ -20,16 +20,6 @@ from tqdm import tqdm
 import torch
 import wandb
 
-wandb.init(
-    project="assignment-4-video-action-recognition",
-    job_type="evaluation",
-)
-
-wandb.log(
-    {
-        "test/accuracy": test_accuracy,
-    }
-)
 
 def train(dataloaders, model, criterion, optimizer, scheduler, device, optim_model_wts_dir, n_epochs=30):
     """

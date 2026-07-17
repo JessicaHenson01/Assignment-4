@@ -16,7 +16,7 @@ import torch
 from tqdm import tqdm
 from sklearn.metrics import classification_report, multilabel_confusion_matrix
 
-def test(model, dataloader, device):
+def test(model, dataloader, device, criterion):
     """
     Evaluate the model on the test dataset and compute overall accuracy.
     

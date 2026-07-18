@@ -128,7 +128,7 @@ def batch_correct_preds(output, target):
     correct_preds = pred.eq(target.view_as(pred)).sum().item()
     return correct_preds
 
-def get_batch_loss(criterion, output, target, optimizer=None):
+def get_batch_loss(model, criterion, output, target, optimizer=None):
     """
     Compute the loss for a mini-batch and perform backpropagation (if optimizer is provided).
     
@@ -149,6 +149,12 @@ def get_batch_loss(criterion, output, target, optimizer=None):
     if optimizer:
         optimizer.zero_grad()
         loss.backward()
+
+        torch.nn.utils.clip_grad_norm_(
+            model.parameters(),
+            max_norm=1.0,
+        )
+
         optimizer.step()
     return loss.item(), n_batch_correct_preds
 
@@ -177,7 +183,7 @@ def get_epoch_loss(model, criterion, dataloader, device, optimizer=None):
     for x_batch, y_batch in tqdm(dataloader):
         x_batch, y_batch = x_batch.to(device), y_batch.to(device)
         output = model(x_batch)
-        batch_loss, n_batch_correct_preds = get_batch_loss(criterion, output, y_batch, optimizer)
+        batch_loss, n_batch_correct_preds = get_batch_loss(model, criterion, output, y_batch, optimizer)
 
         running_loss += batch_loss
         running_total_correct_preds += n_batch_correct_preds

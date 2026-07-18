@@ -1,0 +1,97 @@
+_wandb:
+    value:
+        cli_version: 0.28.0
+        e:
+            q7zjokm297y8wd8d0lvubvij4pcnjpdo:
+                apple:
+                    ecpuCores: 4
+                    gpuCores: 19
+                    macModel: Mac14,10
+                    memoryGb: 32
+                    name: Apple M2 Pro
+                    pcpuCores: 8
+                    ramTotalBytes: "34359738368"
+                args:
+                    - --mode
+                    - train
+                    - --frame_dir
+                    - HMDB51
+                    - --n_classes
+                    - "51"
+                    - --batch_size
+                    - "2"
+                    - --model_type
+                    - lrcn
+                    - --cnn_backbone
+                    - resnet34
+                    - --pretrained
+                    - "True"
+                    - --fr_per_vid
+                    - "24"
+                    - --rnn_hidden_size
+                    - "256"
+                    - --rnn_n_layers
+                    - "2"
+                    - --dropout
+                    - "0.4"
+                    - --learning_rate
+                    - "0.00003"
+                    - --n_epochs
+                    - "25"
+                codePath: run.py
+                codePathLocal: run.py
+                cpu_count: 12
+                cpu_count_logical: 12
+                disk:
+                    /:
+                        total: "994662584320"
+                        used: "981751730176"
+                email: jhenso13@jh.edu
+                executable: /opt/homebrew/anaconda3/envs/assignment4/bin/python
+                git:
+                    commit: 23000c69470cc180e58d5a97e1b59c6110afa890
+                    remote: https://github.com/JessicaHenson01/Assignment-4.git
+                host: Jessicas-MacBook-Pro-2.local
+                memory:
+                    total: "34359738368"
+                os: macOS-26.5.2-arm64-arm-64bit
+                program: /Users/jessicahenson/Desktop/Assignment 4 - Video Action Recognition/run.py
+                python: CPython 3.12.13
+                root: /Users/jessicahenson/Desktop/Assignment 4 - Video Action Recognition
+                startedAt: "2026-07-18T01:35:02.819312Z"
+                writerId: q7zjokm297y8wd8d0lvubvij4pcnjpdo
+        m: []
+        python_version: 3.12.13
+        t:
+            "1":
+                - 1
+                - 5
+                - 41
+                - 53
+            "2":
+                - 1
+                - 5
+                - 41
+                - 53
+            "3":
+                - 16
+            "4": 3.12.13
+            "5": 0.28.0
+            "12": 0.28.0
+            "13": darwin-arm64
+backbone:
+    value: resnet34
+batch_size:
+    value: 2
+dropout:
+    value: 0.4
+epochs:
+    value: 25
+frames_per_video:
+    value: 24
+hidden_size:
+    value: 256
+learning_rate:
+    value: 3e-05
+lstm_layers:
+    value: 2

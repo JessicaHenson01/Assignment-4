@@ -147,6 +147,12 @@ def main(args):
     # Initialize the model (LRCN)
     model = LRCN(hidden_size=rnn_hidden_size, n_layers=rnn_n_layers, dropout_rate=dropout,
                  n_classes=n_classes, pretrained=pretrained, cnn_model=cnn_backbone)
+    
+    for parameter in model.base_model.parameters():
+        parameter.requires_grad = False
+
+    for parameter in model.base_model.layer4.parameters():
+        parameter.requires_grad = True
 
     if mode == 'train':
         # Load dataset and split into train/validation/test
@@ -165,8 +171,33 @@ def main(args):
         dataloaders = train_val_dloaders(tr_dataset, val_dataset, batch_size, model_type)
 
         # Define the loss function, optimizer, and learning rate scheduler
-        loss_func = nn.CrossEntropyLoss(reduction='sum')
-        opt = optim.Adam(model.parameters(), lr=learning_rate)
+        loss_func = nn.CrossEntropyLoss(
+            reduction="sum",
+            label_smoothing=0.1,
+        )
+
+        opt = optim.AdamW(
+            [
+                {
+                    "params": model.base_model.layer4.parameters(),
+                    "lr": 1e-5,
+                },
+                {
+                    "params": model.rnn.parameters(),
+                    "lr": 1e-4,
+                },
+                {
+                    "params": model.attention.parameters(),
+                    "lr": 1e-4,
+                },
+                {
+                    "params": model.fc.parameters(),
+                    "lr": 1e-4,
+                },
+            ],
+            weight_decay=1e-4,
+        )
+
         lr_scheduler = ReduceLROnPlateau(opt, mode='min', factor=0.5, patience=5) #, verbose=1
         os.makedirs("./models", exist_ok=True)
         optim_model_dir = './models'

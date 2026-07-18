@@ -16,11 +16,21 @@ from torch.nn.utils.rnn import pad_sequence
 from PIL import Image
 
 import os
+import re
 import glob
 from tqdm import tqdm
 import numpy as np
 from sklearn.model_selection import StratifiedShuffleSplit
 
+def get_frame_number(frame_path):
+    """Return the last numeric value in a frame filename."""
+    filename = os.path.basename(frame_path)
+    numbers = re.findall(r"\d+", filename)
+
+    if not numbers:
+        return -1
+
+    return int(numbers[-1])
 
 class VideoDataset(Dataset):
     """
@@ -55,24 +65,47 @@ class VideoDataset(Dataset):
             tuple: (frames_tensor, label) where frames_tensor is a tensor of shape (T, C, H, W)
                    with T being the number of frames (up to fr_per_vid) and label is an integer.
         """
-        # Get all JPEG frame paths from the video directory and select up to fr_per_vid frames
-        fr_paths = glob.glob(self.dataset[idx][0] + '/*.jpg')
-        fr_paths = fr_paths[:self.fpv]
-        
-        # Open images using PIL
-        fr_imgs = [Image.open(fr_path) for fr_path in fr_paths]
-        
-        # Get the label associated with the video
-        fr_label = self.dataset[idx][1]
-        
-        # Apply transforms to each frame if provided, else keep original images
-        fr_imgs_trans = [self.transforms(fr_img) for fr_img in fr_imgs] if self.transforms else fr_imgs
+        video_path, frame_label = self.dataset[idx]
 
-        # Stack transformed images into a tensor if available
-        if len(fr_imgs_trans) > 0:
-            fr_imgs_trans = torch.stack(fr_imgs_trans)
+        frame_paths = glob.glob(
+            os.path.join(video_path, "*.jpg")
+        )
 
-        return fr_imgs_trans, fr_label
+        frame_paths = sorted(
+            frame_paths,
+            key=get_frame_number,
+        )
+
+        if not frame_paths:
+            return torch.empty(0), frame_label
+
+        if len(frame_paths) > self.fpv:
+            selected_indices = np.linspace(
+                0,
+                len(frame_paths) - 1,
+                num=self.fpv,
+                dtype=int,
+            )
+
+            frame_paths = [
+                frame_paths[index]
+                for index in selected_indices
+            ]
+
+        transformed_frames = []
+
+        for frame_path in frame_paths:
+            with Image.open(frame_path) as frame:
+                frame = frame.convert("RGB")
+
+                if self.transforms is not None:
+                    frame = self.transforms(frame)
+
+                transformed_frames.append(frame)
+
+        frames_tensor = torch.stack(transformed_frames)
+
+        return frames_tensor, frame_label
 
 
 def load_dataset(frame_dir):

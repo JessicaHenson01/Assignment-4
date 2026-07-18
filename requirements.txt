@@ -6,3 +6,4 @@ tqdm
 numpy
 Pillow
 pylint
+wandb

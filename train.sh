@@ -5,7 +5,7 @@ python run.py \
   --n_classes 51 \
   --batch_size 4 \
   --model_type lrcn \
-  --cnn_backbone resnet34 \
+  --cnn_backbone resnet50 \
   --pretrained True \
   --fr_per_vid 16 \
   --rnn_hidden_size 256 \

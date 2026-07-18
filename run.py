@@ -148,8 +148,13 @@ def main(args):
     model = LRCN(hidden_size=rnn_hidden_size, n_layers=rnn_n_layers, dropout_rate=dropout,
                  n_classes=n_classes, pretrained=pretrained, cnn_model=cnn_backbone)
     
+    # Freeze the complete pretrained backbone first.
     for parameter in model.base_model.parameters():
         parameter.requires_grad = False
+
+    # Fine-tune the final two ResNet stages.
+    for parameter in model.base_model.layer3.parameters():
+        parameter.requires_grad = True
 
     for parameter in model.base_model.layer4.parameters():
         parameter.requires_grad = True
@@ -179,16 +184,20 @@ def main(args):
         opt = optim.AdamW(
             [
                 {
+                    "params": model.base_model.layer3.parameters(),
+                    "lr": 3e-6,
+                },
+                {
                     "params": model.base_model.layer4.parameters(),
                     "lr": 1e-5,
                 },
                 {
                     "params": model.rnn.parameters(),
-                    "lr": 1e-4,
+                    "lr": 5e-5,
                 },
                 {
                     "params": model.attention.parameters(),
-                    "lr": 1e-4,
+                    "lr": 5e-5,
                 },
                 {
                     "params": model.fc.parameters(),

@@ -11,7 +11,7 @@ using stratified sampling, and custom collate functions for handling variable-le
 import torch
 from torch.utils.data import Dataset
 from torchvision import transforms as transforms
-from torch.nn.utils.rnn import pad_sequence
+# from torch.nn.utils.rnn import pad_sequence
 
 from PIL import Image
 
@@ -79,18 +79,38 @@ class VideoDataset(Dataset):
         if not frame_paths:
             return torch.empty(0), frame_label
 
-        if len(frame_paths) > self.fpv:
-            selected_indices = np.linspace(
-                0,
-                len(frame_paths) - 1,
-                num=self.fpv,
-                dtype=int,
-            )
+        # if len(frame_paths) > self.fpv:
+        #     selected_indices = np.linspace(
+        #         0,
+        #         len(frame_paths) - 1,
+        #         num=self.fpv,
+        #         dtype=int,
+        #     )
 
-            frame_paths = [
-                frame_paths[index]
-                for index in selected_indices
-            ]
+        #     frame_paths = [
+        #         frame_paths[index]
+        #         for index in selected_indices
+        #     ]
+
+        # Always select exactly self.fpv frames.
+        #
+        # For long videos, this uniformly samples across the full video.
+        # For short videos, repeated indices reuse real frames instead of
+        # padding the sequence with black frames.
+        selected_indices = np.linspace(
+            0,
+            len(frame_paths) - 1,
+            num=self.fpv,
+        )
+
+        selected_indices = np.rint(
+            selected_indices
+        ).astype(int)
+
+        frame_paths = [
+            frame_paths[index]
+            for index in selected_indices
+        ]
 
         transformed_frames = []
 
@@ -108,32 +128,88 @@ class VideoDataset(Dataset):
         return frames_tensor, frame_label
 
 
+# def load_dataset(frame_dir):
+#     """
+#     Load the full video dataset from the specified directory.
+    
+#     Each subdirectory in frame_dir is assumed to correspond to a video category.
+#     The function builds a dictionary where keys are paths to video directories and
+#     values are integer labels corresponding to each category.
+    
+#     Args:
+#         frame_dir (str): Path to the directory containing subdirectories for each video category.
+    
+#     Returns:
+#         tuple: (vid_dataset, label_dict)
+#             - vid_dataset (dict): Dictionary mapping video directory paths to integer labels.
+#             - label_dict (dict): Dictionary mapping video category names to integer labels.
+#     """
+#     label_dict = {vid_cat: idx for idx, vid_cat in enumerate(sorted(os.listdir(frame_dir)))}
+#     vid_dataset = {}
+#     print('Loading video dataset....')
+#     for vid_cat in tqdm(sorted(os.listdir(frame_dir))):
+#         vid_cat_path = os.path.join(frame_dir, vid_cat)
+#         for vid in os.listdir(vid_cat_path):
+#             vid_path = os.path.join(vid_cat_path, vid)
+#             vid_dataset[vid_path] = label_dict[vid_cat]
+#     return vid_dataset, label_dict
+
 def load_dataset(frame_dir):
     """
-    Load the full video dataset from the specified directory.
-    
-    Each subdirectory in frame_dir is assumed to correspond to a video category.
-    The function builds a dictionary where keys are paths to video directories and
-    values are integer labels corresponding to each category.
-    
-    Args:
-        frame_dir (str): Path to the directory containing subdirectories for each video category.
-    
-    Returns:
-        tuple: (vid_dataset, label_dict)
-            - vid_dataset (dict): Dictionary mapping video directory paths to integer labels.
-            - label_dict (dict): Dictionary mapping video category names to integer labels.
-    """
-    label_dict = {vid_cat: idx for idx, vid_cat in enumerate(sorted(os.listdir(frame_dir)))}
-    vid_dataset = {}
-    print('Loading video dataset....')
-    for vid_cat in tqdm(sorted(os.listdir(frame_dir))):
-        vid_cat_path = os.path.join(frame_dir, vid_cat)
-        for vid in os.listdir(vid_cat_path):
-            vid_path = os.path.join(vid_cat_path, vid)
-            vid_dataset[vid_path] = label_dict[vid_cat]
-    return vid_dataset, label_dict
+    Load video directories containing at least one JPEG frame.
 
+    Returns:
+        tuple:
+            video_dataset: Mapping from video directory to class label.
+            label_dict: Mapping from class name to integer label.
+    """
+    class_names = [
+        class_name
+        for class_name in sorted(os.listdir(frame_dir))
+        if os.path.isdir(os.path.join(frame_dir, class_name))
+    ]
+
+    label_dict = {
+        class_name: index
+        for index, class_name in enumerate(class_names)
+    }
+
+    video_dataset = {}
+    skipped_videos = []
+
+    print("Loading video dataset....")
+
+    for class_name in tqdm(class_names):
+        class_path = os.path.join(frame_dir, class_name)
+
+        for video_name in sorted(os.listdir(class_path)):
+            video_path = os.path.join(class_path, video_name)
+
+            if not os.path.isdir(video_path):
+                continue
+
+            frame_paths = glob.glob(
+                os.path.join(video_path, "*.jpg")
+            )
+
+            if not frame_paths:
+                skipped_videos.append(video_path)
+                continue
+
+            video_dataset[video_path] = label_dict[class_name]
+
+    print(
+        f"Loaded {len(video_dataset)} videos; "
+        f"skipped {len(skipped_videos)} empty directories."
+    )
+
+    if skipped_videos:
+        print("Skipped empty video directories:")
+
+        for video_path in skipped_videos:
+            print(f"  {video_path}")
+
+    return video_dataset, label_dict
 
 def dataset_split(vid_dataset, tr_ratio, ts_ratio, seed=0):
     """
@@ -221,20 +297,24 @@ def collate_fn_rnn(batch):
             - padded_imgs (Tensor): Padded tensor of video frames.
             - labels_tensor (Tensor): Tensor of labels.
     """
-    # Unzip the batch into image tensors and labels
-    imgs_batch, label_batch = list(zip(*batch))
-    
-    # Filter out any samples that have no frames
-    valid_samples = [(imgs, label) for imgs, label in zip(imgs_batch, label_batch) if len(imgs) > 0]
+    valid_samples = [
+        (images, label)
+        for images, label in batch
+        if len(images) > 0
+    ]
+
     if not valid_samples:
         return None, None
-    imgs_batch, label_batch = zip(*valid_samples)
-    
-    # Pad the video frame tensors along the time dimension (T)
-    # Resulting shape: (batch_size, max_T, C, H, W)
-    padded_imgs = pad_sequence(imgs_batch, batch_first=True)
-    
-    # Convert labels to a tensor
-    labels_tensor = torch.tensor(label_batch)
-    
-    return padded_imgs, labels_tensor
+
+    images_batch, label_batch = zip(*valid_samples)
+
+    images_tensor = torch.stack(
+        images_batch
+    )
+
+    labels_tensor = torch.tensor(
+        label_batch,
+        dtype=torch.long,
+    )
+
+    return images_tensor, labels_tensor

@@ -58,6 +58,8 @@ def train(dataloaders, model, criterion, optimizer, scheduler, device, optim_mod
 
         # Training phase
         model.train()
+        model.base_model.eval()
+        model.base_model.layer4.train()
         train_loss, train_accuracy = get_epoch_loss(model, criterion, dataloaders['train'], device, optimizer)
         loss_hist['train'].append(train_loss)
         acc_hist['train'].append(train_accuracy)
@@ -78,9 +80,9 @@ def train(dataloaders, model, criterion, optimizer, scheduler, device, optim_mod
 
         # Update learning rate based on validation loss
         scheduler.step(val_loss)
-        if current_lr != get_learning_rate(optimizer):
-            print('Loading best model weights!')
-            model.load_state_dict(best_model_wts)
+        # if current_lr != get_learning_rate(optimizer):
+        #     print('Loading best model weights!')
+        #     model.load_state_dict(best_model_wts)
 
         wandb.log(
             {

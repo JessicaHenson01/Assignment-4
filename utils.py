@@ -1,216 +1,301 @@
-"""
-Module: utils.py
-
-This module provides helper functions for video processing and data transformations 
-for video classification tasks. It includes functions for:
-    - Uniformly sampling frames from videos.
-    - Storing extracted frames as JPEG images.
-    - Retrieving image transformation statistics based on the model type.
-    - Composing data transforms for training and validation/test datasets.
-    - Creating DataLoaders for training, validation, and testing, using custom collate functions.
-"""
+"""Video utilities, clip-level transforms, and DataLoader construction."""
 
 import os
+import random
+
 import cv2
 import numpy as np
-
-from torchvision import transforms as transforms
+import torch
 from torch.utils.data import DataLoader
-from video_datasets import collate_fn_r3d_18, collate_fn_rnn
+from torchvision import transforms
+from torchvision.transforms import InterpolationMode
+from torchvision.transforms import functional as transform_functional
+
+from video_datasets import (
+    collate_fn_r3d_18,
+    collate_fn_rnn,
+)
+
 
 # pylint: disable=no-member
-
 def get_frames(vid, n_frames=1):
-    """
-    Uniformly sample frames from a video file.
-
-    Args:
-        vid (str): Path to the video file.
-        n_frames (int): Number of frames to sample from the video.
-
-    Returns:
-        tuple: (frames, v_len)
-            - frames (list): List of sampled frames (as numpy arrays in RGB format).
-            - v_len (int): Total number of frames in the video.
-            
-    Notes:
-        - If the video cannot be opened or contains no frames, an empty list and 0 are returned.
-        - Frames are sampled at uniformly spaced indices.
-    """
+    """Uniformly sample frames from a video file."""
     frames = []
-    v_cap = cv2.VideoCapture(vid)
-    if not v_cap.isOpened():
+    video_capture = cv2.VideoCapture(vid)
+
+    if not video_capture.isOpened():
         print("Failed to open video:", vid)
         return frames, 0
-    v_len = int(v_cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    if v_len <= 0:
+
+    video_length = int(
+        video_capture.get(
+            cv2.CAP_PROP_FRAME_COUNT
+        )
+    )
+
+    if video_length <= 0:
         print("No frames found in video:", vid)
-        v_cap.release()
+        video_capture.release()
         return frames, 0
-    frame_idx = np.linspace(0, v_len-1, n_frames+1, dtype=np.int16)
-    for idx in range(v_len):
-        success, frame = v_cap.read()
+
+    frame_indices = np.linspace(
+        0,
+        video_length - 1,
+        n_frames,
+        dtype=int,
+    )
+    frame_indices = set(frame_indices.tolist())
+
+    for index in range(video_length):
+        success, frame = video_capture.read()
+
         if not success:
             continue
-        if idx in frame_idx:
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        if index in frame_indices:
+            frame = cv2.cvtColor(
+                frame,
+                cv2.COLOR_BGR2RGB,
+            )
             frames.append(frame)
-    v_cap.release()
-    return frames, v_len
+
+    video_capture.release()
+    return frames, video_length
 
 
 def store_frames(frames, store_path):
-    """
-    Save a list of frames as JPEG images to the specified directory.
+    """Save RGB frames as JPEG images."""
+    os.makedirs(store_path, exist_ok=True)
 
-    Each frame is converted from RGB to BGR format (as expected by OpenCV)
-    before saving.
-
-    Args:
-        frames (list): List of frames (numpy arrays in RGB format) to save.
-        store_path (str): Directory path where the frames will be stored.
-
-    Returns:
-        None
-    """
-    for idx, frame in enumerate(frames):
-        print("processing")
-        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        path_to_frame = os.path.join(store_path, "frame{}.jpg".format(idx))
-        cv2.imwrite(path_to_frame, frame)
+    for index, frame in enumerate(frames):
+        frame = cv2.cvtColor(
+            frame,
+            cv2.COLOR_RGB2BGR,
+        )
+        frame_path = os.path.join(
+            store_path,
+            f"frame{index}.jpg",
+        )
+        cv2.imwrite(frame_path, frame)
 
 
-def transform_stats(model='lrcn'):
-    """
-    Retrieve transformation statistics based on the model type.
-
-    For the 'lrcn' model, images are resized to 224x224; for '3dcnn', images are resized to 112x112.
-    Also returns the mean and standard deviation values used for normalization.
-
-    Args:
-        model (str): Type of model ('lrcn' or '3dcnn').
-
-    Returns:
-        tuple: (h, w, mean, std)
-            - h (int): Image height.
-            - w (int): Image width.
-            - mean (list): Mean values for normalization.
-            - std (list): Standard deviation values for normalization.
-
-    Raises:
-        ValueError: If an undefined model type is provided.
-    """
-    if model == 'lrcn':
-        h, w = 224, 224
+def transform_stats(model="lrcn"):
+    """Return image dimensions and normalization values."""
+    if model in {"lrcn", "motion_transformer"}:
+        height, width = 224, 224
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
-    elif model == '3dcnn':
-        h, w = 112, 112
+    elif model == "3dcnn":
+        height, width = 112, 112
         mean = [0.43216, 0.394666, 0.37645]
         std = [0.22803, 0.22145, 0.216989]
     else:
-        raise ValueError('model_type arg is undefined....')
-    return h, w, mean, std
+        raise ValueError(
+            f"Undefined model type: {model}"
+        )
+
+    return height, width, mean, std
 
 
-def compose_data_transforms(height, width, mean, std):
-    """
-    Compose and return data transforms for training and validation/test datasets.
+class ClipTransform:
+    """Apply one spatial/color augmentation consistently to an entire clip."""
 
-    The training transforms include data augmentation such as random horizontal flipping and random affine transformations,
-    while the validation/test transforms consist solely of resizing, converting to tensor, and normalizing.
+    def __init__(
+        self,
+        height,
+        width,
+        mean,
+        std,
+        training,
+    ):
+        self.height = height
+        self.width = width
+        self.mean = mean
+        self.std = std
+        self.training = training
 
-    Args:
-        height (int): Desired image height.
-        width (int): Desired image width.
-        mean (list): Mean values for normalization.
-        std (list): Standard deviation values for normalization.
+    def __call__(self, frames):
+        if not frames:
+            raise ValueError(
+                "ClipTransform received an empty frame list."
+            )
 
-    Returns:
-        tuple: (train_transforms, val_test_transforms)
-            - train_transforms: Composed transforms for the training set.
-            - val_test_transforms: Composed transforms for the validation/test set.
-    """
-    # train_transforms = transforms.Compose([
-    #     transforms.Resize((height, width)),
-    #     transforms.RandomHorizontalFlip(p=0.5),
-    #     transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
-    #     transforms.ToTensor(),
-    #     transforms.Normalize(mean, std),
-    # ])
-    train_transforms = transforms.Compose(
-        [
-            transforms.Resize((height, width)),
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.ColorJitter(
-                brightness=0.15,
-                contrast=0.15,
-                saturation=0.1,
-            ),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
-        ]
+        if self.training:
+            enlarged_height = self.height + 32
+            enlarged_width = self.width + 32
+
+            resized_frames = [
+                transform_functional.resize(
+                    frame,
+                    [enlarged_height, enlarged_width],
+                    interpolation=InterpolationMode.BILINEAR,
+                    antialias=True,
+                )
+                for frame in frames
+            ]
+
+            top, left, crop_height, crop_width = (
+                transforms.RandomResizedCrop.get_params(
+                    resized_frames[0],
+                    scale=(0.80, 1.0),
+                    ratio=(0.90, 1.10),
+                )
+            )
+
+            apply_flip = random.random() < 0.5
+            brightness_factor = random.uniform(
+                0.85,
+                1.15,
+            )
+            contrast_factor = random.uniform(
+                0.85,
+                1.15,
+            )
+
+            processed_frames = []
+
+            for frame in resized_frames:
+                frame = transform_functional.resized_crop(
+                    frame,
+                    top,
+                    left,
+                    crop_height,
+                    crop_width,
+                    [self.height, self.width],
+                    interpolation=InterpolationMode.BILINEAR,
+                    antialias=True,
+                )
+
+                if apply_flip:
+                    frame = transform_functional.hflip(
+                        frame
+                    )
+
+                frame = (
+                    transform_functional.adjust_brightness(
+                        frame,
+                        brightness_factor,
+                    )
+                )
+                frame = (
+                    transform_functional.adjust_contrast(
+                        frame,
+                        contrast_factor,
+                    )
+                )
+
+                processed_frames.append(frame)
+        else:
+            processed_frames = [
+                transform_functional.resize(
+                    frame,
+                    [self.height, self.width],
+                    interpolation=InterpolationMode.BILINEAR,
+                    antialias=True,
+                )
+                for frame in frames
+            ]
+
+        tensors = []
+
+        for frame in processed_frames:
+            frame_tensor = transform_functional.to_tensor(
+                frame
+            )
+            frame_tensor = transform_functional.normalize(
+                frame_tensor,
+                self.mean,
+                self.std,
+            )
+            tensors.append(frame_tensor)
+
+        return torch.stack(tensors)
+
+
+def compose_data_transforms(
+    height,
+    width,
+    mean,
+    std,
+):
+    """Return clip-consistent training and evaluation transforms."""
+    train_transform = ClipTransform(
+        height=height,
+        width=width,
+        mean=mean,
+        std=std,
+        training=True,
     )
-    val_test_transforms = transforms.Compose([
-        transforms.Resize((height, width)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean, std),
-    ])
-    return train_transforms, val_test_transforms
+    validation_test_transform = ClipTransform(
+        height=height,
+        width=width,
+        mean=mean,
+        std=std,
+        training=False,
+    )
+
+    return (
+        train_transform,
+        validation_test_transform,
+    )
 
 
-def train_val_dloaders(train_dataset, val_dataset, batch_size, model='lrcn'):
-    """
-    Create DataLoaders for training and validation datasets.
-
-    Selects the appropriate collate function based on the model type.
-    For 'lrcn' (RNN-based models), uses collate_fn_rnn which pads sequences to equal lengths.
-    Otherwise, uses collate_fn_r3d_18 for 3D CNN models.
-
-    Args:
-        train_dataset (Dataset): PyTorch Dataset for training data.
-        val_dataset (Dataset): PyTorch Dataset for validation data.
-        batch_size (int): Number of samples per batch.
-        model (str): Model type; 'lrcn' for RNN-based models, otherwise for 3D CNNs.
-
-    Returns:
-        dict: Dictionary with keys 'train' and 'val' mapping to their respective DataLoaders.
-    """
-    if model == "lrcn":
-        train_dl = DataLoader(train_dataset, batch_size=batch_size,
-                              shuffle=True, collate_fn=collate_fn_rnn)
-        val_dl = DataLoader(val_dataset, batch_size=2 * batch_size,
-                            shuffle=False, collate_fn=collate_fn_rnn)
-    else:
-        train_dl = DataLoader(train_dataset, batch_size=batch_size,
-                              shuffle=True, collate_fn=collate_fn_r3d_18)
-        val_dl = DataLoader(val_dataset, batch_size=2 * batch_size,
-                            shuffle=False, collate_fn=collate_fn_r3d_18)
-    dataloaders = {'train': train_dl, 'val': val_dl}
-    return dataloaders
+def _uses_sequence_layout(model):
+    return model in {
+        "lrcn",
+        "motion_transformer",
+    }
 
 
-def test_dloaders(test_dataset, batch_size, model='lrcn'):
-    """
-    Create a DataLoader for the test dataset.
+def train_val_dloaders(
+    train_dataset,
+    val_dataset,
+    batch_size,
+    model="lrcn",
+):
+    """Create training and validation DataLoaders."""
+    collate_function = (
+        collate_fn_rnn
+        if _uses_sequence_layout(model)
+        else collate_fn_r3d_18
+    )
 
-    Selects the appropriate collate function based on the model type.
-    For 'lrcn' models, uses collate_fn_rnn; otherwise, uses collate_fn_r3d_18.
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=collate_function,
+    )
+    validation_loader = DataLoader(
+        val_dataset,
+        batch_size=2 * batch_size,
+        shuffle=False,
+        collate_fn=collate_function,
+    )
 
-    Args:
-        test_dataset (Dataset): PyTorch Dataset for test data.
-        batch_size (int): Number of samples per batch.
-        model (str): Model type; 'lrcn' for RNN-based models, otherwise for 3D CNNs.
+    return {
+        "train": train_loader,
+        "val": validation_loader,
+    }
 
-    Returns:
-        dict: Dictionary with key 'test' mapping to the test DataLoader.
-    """
-    if model == "lrcn":
-        test_dl = DataLoader(test_dataset, batch_size=2 * batch_size,
-                             shuffle=False, collate_fn=collate_fn_rnn)
-    else:
-        test_dl = DataLoader(test_dataset, batch_size=2 * batch_size,
-                             shuffle=False, collate_fn=collate_fn_r3d_18)
-    dataloaders = {'test': test_dl}
-    return dataloaders
 
+def test_dloaders(
+    test_dataset,
+    batch_size,
+    model="lrcn",
+):
+    """Create a test DataLoader."""
+    collate_function = (
+        collate_fn_rnn
+        if _uses_sequence_layout(model)
+        else collate_fn_r3d_18
+    )
+
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=2 * batch_size,
+        shuffle=False,
+        collate_fn=collate_function,
+    )
+
+    return {"test": test_loader}

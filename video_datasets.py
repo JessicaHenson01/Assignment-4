@@ -1,174 +1,140 @@
-"""
-Module: video_datasets.py
+"""Dataset loading and clip-level frame sampling."""
 
-This module provides classes and functions for loading and processing video datasets,
-splitting them into training, validation, and test sets, and preparing data for video
-classification models. It includes a custom PyTorch Dataset for videos stored as directories
-of frame images, functions to load the dataset from a directory structure, split the dataset
-using stratified sampling, and custom collate functions for handling variable-length video sequences.
-"""
-
-import torch
-from torch.utils.data import Dataset
-from torchvision import transforms as transforms
-# from torch.nn.utils.rnn import pad_sequence
-
-from PIL import Image
-
+import glob
 import os
 import re
-import glob
-from tqdm import tqdm
+
 import numpy as np
+import torch
+from PIL import Image
 from sklearn.model_selection import StratifiedShuffleSplit
+from torch.utils.data import Dataset
+from torchvision.transforms import functional as transform_functional
+from tqdm import tqdm
+
 
 def get_frame_number(frame_path):
     """Return the last numeric value in a frame filename."""
     filename = os.path.basename(frame_path)
     numbers = re.findall(r"\d+", filename)
+    return int(numbers[-1]) if numbers else -1
 
-    if not numbers:
-        return -1
-
-    return int(numbers[-1])
 
 class VideoDataset(Dataset):
-    """
-    PyTorch Dataset class for loading video data from directories of frame images.
-    
-    Each video is represented as a directory containing JPEG images of its frames.
-    The dataset is provided as a dictionary mapping each video directory path to its label.
-    
-    Args:
-        vid_dataset (dict): Dictionary where keys are video directory paths and values are integer labels.
-        fr_per_vid (int): Number of frames per video to load (images are taken in order).
-        transforms (callable, optional): A function/transform to apply to each frame image (e.g., resizing, normalization).
-    """
-    def __init__(self, vid_dataset, fr_per_vid, transforms=None):
-        self.dataset = vid_dataset
+    """Load a fixed-length clip from each extracted-frame directory."""
+
+    def __init__(
+        self,
+        vid_dataset,
+        fr_per_vid,
+        transforms=None,
+        training=False,
+    ):
+        self.dataset = list(vid_dataset)
         self.fpv = fr_per_vid
         self.transforms = transforms
+        self.training = training
 
     def __len__(self):
-        """Return the number of video samples in the dataset."""
         return len(self.dataset)
 
+    def _sample_indices(self, frame_count):
+        """Choose exactly self.fpv indices."""
+        if frame_count <= 0:
+            raise ValueError("frame_count must be positive.")
+
+        if frame_count < self.fpv:
+            return np.rint(
+                np.linspace(
+                    0,
+                    frame_count - 1,
+                    num=self.fpv,
+                )
+            ).astype(int)
+
+        if not self.training:
+            return np.rint(
+                np.linspace(
+                    0,
+                    frame_count - 1,
+                    num=self.fpv,
+                )
+            ).astype(int)
+
+        # Random segment sampling: choose one frame from each temporal segment.
+        boundaries = np.linspace(
+            0,
+            frame_count,
+            num=self.fpv + 1,
+            dtype=int,
+        )
+        indices = []
+
+        for start, end in zip(
+            boundaries[:-1],
+            boundaries[1:],
+        ):
+            if end <= start:
+                index = min(start, frame_count - 1)
+            else:
+                index = np.random.randint(start, end)
+
+            indices.append(index)
+
+        return np.asarray(indices, dtype=int)
+
     def __getitem__(self, idx):
-        """
-        Load frames from the video directory corresponding to the given index, apply transforms,
-        and return the stacked tensor of frames along with its label.
-        
-        Args:
-            idx (int): Index of the sample.
-            
-        Returns:
-            tuple: (frames_tensor, label) where frames_tensor is a tensor of shape (T, C, H, W)
-                   with T being the number of frames (up to fr_per_vid) and label is an integer.
-        """
         video_path, frame_label = self.dataset[idx]
 
-        frame_paths = glob.glob(
-            os.path.join(video_path, "*.jpg")
-        )
-
         frame_paths = sorted(
-            frame_paths,
+            glob.glob(
+                os.path.join(video_path, "*.jpg")
+            ),
             key=get_frame_number,
         )
 
         if not frame_paths:
-            return torch.empty(0), frame_label
+            raise FileNotFoundError(
+                f"No JPEG frames found in: {video_path}"
+            )
 
-        # if len(frame_paths) > self.fpv:
-        #     selected_indices = np.linspace(
-        #         0,
-        #         len(frame_paths) - 1,
-        #         num=self.fpv,
-        #         dtype=int,
-        #     )
-
-        #     frame_paths = [
-        #         frame_paths[index]
-        #         for index in selected_indices
-        #     ]
-
-        # Always select exactly self.fpv frames.
-        #
-        # For long videos, this uniformly samples across the full video.
-        # For short videos, repeated indices reuse real frames instead of
-        # padding the sequence with black frames.
-        selected_indices = np.linspace(
-            0,
-            len(frame_paths) - 1,
-            num=self.fpv,
+        selected_indices = self._sample_indices(
+            len(frame_paths)
         )
-
-        selected_indices = np.rint(
-            selected_indices
-        ).astype(int)
-
-        frame_paths = [
+        selected_paths = [
             frame_paths[index]
             for index in selected_indices
         ]
 
-        transformed_frames = []
+        frames = []
+        for frame_path in selected_paths:
+            with Image.open(frame_path) as image:
+                frames.append(
+                    image.convert("RGB").copy()
+                )
 
-        for frame_path in frame_paths:
-            with Image.open(frame_path) as frame:
-                frame = frame.convert("RGB")
+        if self.transforms is not None:
+            frames_tensor = self.transforms(frames)
+        else:
+            frames_tensor = torch.stack(
+                [
+                    transform_functional.to_tensor(frame)
+                    for frame in frames
+                ]
+            )
 
-                if self.transforms is not None:
-                    frame = self.transforms(frame)
+        return frames_tensor, int(frame_label)
 
-                transformed_frames.append(frame)
-
-        frames_tensor = torch.stack(transformed_frames)
-
-        return frames_tensor, frame_label
-
-
-# def load_dataset(frame_dir):
-#     """
-#     Load the full video dataset from the specified directory.
-    
-#     Each subdirectory in frame_dir is assumed to correspond to a video category.
-#     The function builds a dictionary where keys are paths to video directories and
-#     values are integer labels corresponding to each category.
-    
-#     Args:
-#         frame_dir (str): Path to the directory containing subdirectories for each video category.
-    
-#     Returns:
-#         tuple: (vid_dataset, label_dict)
-#             - vid_dataset (dict): Dictionary mapping video directory paths to integer labels.
-#             - label_dict (dict): Dictionary mapping video category names to integer labels.
-#     """
-#     label_dict = {vid_cat: idx for idx, vid_cat in enumerate(sorted(os.listdir(frame_dir)))}
-#     vid_dataset = {}
-#     print('Loading video dataset....')
-#     for vid_cat in tqdm(sorted(os.listdir(frame_dir))):
-#         vid_cat_path = os.path.join(frame_dir, vid_cat)
-#         for vid in os.listdir(vid_cat_path):
-#             vid_path = os.path.join(vid_cat_path, vid)
-#             vid_dataset[vid_path] = label_dict[vid_cat]
-#     return vid_dataset, label_dict
 
 def load_dataset(frame_dir):
-    """
-    Load video directories containing at least one JPEG frame.
-
-    Returns:
-        tuple:
-            video_dataset: Mapping from video directory to class label.
-            label_dict: Mapping from class name to integer label.
-    """
+    """Load nonempty video directories and assign integer class labels."""
     class_names = [
         class_name
         for class_name in sorted(os.listdir(frame_dir))
-        if os.path.isdir(os.path.join(frame_dir, class_name))
+        if os.path.isdir(
+            os.path.join(frame_dir, class_name)
+        )
     ]
-
     label_dict = {
         class_name: index
         for index, class_name in enumerate(class_names)
@@ -180,10 +146,16 @@ def load_dataset(frame_dir):
     print("Loading video dataset....")
 
     for class_name in tqdm(class_names):
-        class_path = os.path.join(frame_dir, class_name)
+        class_path = os.path.join(
+            frame_dir,
+            class_name,
+        )
 
         for video_name in sorted(os.listdir(class_path)):
-            video_path = os.path.join(class_path, video_name)
+            video_path = os.path.join(
+                class_path,
+                video_name,
+            )
 
             if not os.path.isdir(video_path):
                 continue
@@ -196,122 +168,143 @@ def load_dataset(frame_dir):
                 skipped_videos.append(video_path)
                 continue
 
-            video_dataset[video_path] = label_dict[class_name]
+            video_dataset[video_path] = (
+                label_dict[class_name]
+            )
 
     print(
         f"Loaded {len(video_dataset)} videos; "
         f"skipped {len(skipped_videos)} empty directories."
     )
 
-    if skipped_videos:
-        print("Skipped empty video directories:")
-
-        for video_path in skipped_videos:
-            print(f"  {video_path}")
-
     return video_dataset, label_dict
 
-def dataset_split(vid_dataset, tr_ratio, ts_ratio, seed=0):
-    """
-    Split the dataset into training, validation, and test sets using stratified sampling.
-    
-    This function uses StratifiedShuffleSplit to ensure that each split has a representative
-    distribution of classes.
-    
-    Args:
-        vid_dataset (dict): Dictionary mapping video paths to labels.
-        tr_ratio (float): Proportion of the data to use for training.
-        ts_ratio (float): Proportion of the data to use for testing.
-        seed (int, optional): Random seed for reproducibility. Default is 0.
-    
-    Returns:
-        tuple: (tr_dataset, val_dataset, ts_dataset)
-            - tr_dataset (list): List of (video_path, label) tuples for the training set.
-            - val_dataset (list): List of (video_path, label) tuples for the validation set.
-            - ts_dataset (list): List of (video_path, label) tuples for the test set.
-    """
-    vid_paths = np.array([vid_path for vid_path in vid_dataset.keys()])
-    vid_labels = np.array([vid_label for vid_label in vid_dataset.values()])
-    print('Splitting train/validation/test datasets....')
 
-    # Test split using StratifiedShuffleSplit
-    ts_spliter = StratifiedShuffleSplit(n_splits=1, test_size=ts_ratio, random_state=seed)
-    for tr_val_idx, ts_idx in ts_spliter.split(vid_paths, vid_labels):
-        ts_paths, ts_labels = vid_paths[ts_idx], vid_labels[ts_idx]
-        tr_val_paths, tr_val_labels = vid_paths[tr_val_idx], vid_labels[tr_val_idx]
-    ts_dataset = [(ts_path, ts_label) for ts_path, ts_label in zip(ts_paths, ts_labels)]
+def dataset_split(
+    vid_dataset,
+    tr_ratio,
+    ts_ratio,
+    seed=0,
+):
+    """Create stratified train, validation, and test splits."""
+    vid_paths = np.array(
+        list(vid_dataset.keys())
+    )
+    vid_labels = np.array(
+        list(vid_dataset.values())
+    )
 
-    # Train/validation split
-    val_ratio = 1 - tr_ratio - ts_ratio
-    val_wt = val_ratio / (tr_ratio + val_ratio)
-    val_spliter = StratifiedShuffleSplit(n_splits=1, test_size=val_wt, random_state=seed)
-    for tr_idx, val_idx in val_spliter.split(tr_val_paths, tr_val_labels):
-        tr_paths, tr_labels = tr_val_paths[tr_idx], tr_val_labels[tr_idx]
-        val_paths, val_labels = tr_val_paths[val_idx], tr_val_labels[val_idx]
-    tr_dataset = [(tr_path, tr_label) for tr_path, tr_label in zip(tr_paths, tr_labels)]
-    val_dataset = [(val_path, val_label) for val_path, val_label in zip(val_paths, val_labels)]
+    print(
+        "Splitting train/validation/test datasets...."
+    )
 
-    return tr_dataset, val_dataset, ts_dataset
+    test_splitter = StratifiedShuffleSplit(
+        n_splits=1,
+        test_size=ts_ratio,
+        random_state=seed,
+    )
+    train_val_indices, test_indices = next(
+        test_splitter.split(
+            vid_paths,
+            vid_labels,
+        )
+    )
+
+    test_paths = vid_paths[test_indices]
+    test_labels = vid_labels[test_indices]
+    train_val_paths = vid_paths[train_val_indices]
+    train_val_labels = vid_labels[train_val_indices]
+
+    test_dataset = list(
+        zip(
+            test_paths.tolist(),
+            test_labels.tolist(),
+        )
+    )
+
+    validation_ratio = 1 - tr_ratio - ts_ratio
+    validation_weight = (
+        validation_ratio
+        / (tr_ratio + validation_ratio)
+    )
+
+    validation_splitter = StratifiedShuffleSplit(
+        n_splits=1,
+        test_size=validation_weight,
+        random_state=seed,
+    )
+    train_indices, validation_indices = next(
+        validation_splitter.split(
+            train_val_paths,
+            train_val_labels,
+        )
+    )
+
+    train_dataset = list(
+        zip(
+            train_val_paths[train_indices].tolist(),
+            train_val_labels[train_indices].tolist(),
+        )
+    )
+    validation_dataset = list(
+        zip(
+            train_val_paths[validation_indices].tolist(),
+            train_val_labels[validation_indices].tolist(),
+        )
+    )
+
+    train_paths = {path for path, _ in train_dataset}
+    validation_paths = {
+        path for path, _ in validation_dataset
+    }
+    test_paths = {path for path, _ in test_dataset}
+
+    assert train_paths.isdisjoint(validation_paths)
+    assert train_paths.isdisjoint(test_paths)
+    assert validation_paths.isdisjoint(test_paths)
+
+    return (
+        train_dataset,
+        validation_dataset,
+        test_dataset,
+    )
 
 
 def collate_fn_r3d_18(batch):
-    """
-    Collate function for 3D CNN models (e.g., R3D-18).
-    
-    Assumes each sample in the batch is a tuple (video_frames, label),
-    where video_frames is a tensor of shape (T, C, H, W). This function filters out any samples
-    with no frames, stacks the video frame tensors, transposes the tensor dimensions as needed,
-    and stacks the labels.
-    
-    Args:
-        batch (list): List of samples, each as (video_frames, label).
-    
-    Returns:
-        tuple: (imgs_tensor, labels_tensor)
-            - imgs_tensor (Tensor): Stacked video frames tensor with shape adjusted for R3D-18.
-            - labels_tensor (Tensor): Tensor of labels.
-    """
-    imgs_batch, label_batch = list(zip(*batch))
-    imgs_batch = [imgs for imgs in imgs_batch if len(imgs) > 0]
-    label_batch = [torch.tensor(l) for l, imgs in zip(label_batch, imgs_batch) if len(imgs) > 0]
-    imgs_tensor = torch.stack(imgs_batch)
-    imgs_tensor = torch.transpose(imgs_tensor, 2, 1)
-    labels_tensor = torch.stack(label_batch)
-    return imgs_tensor, labels_tensor
-
-
-def collate_fn_rnn(batch):
-    """
-    Collate function for RNN-based models.
-    
-    Handles variable-length video sequences by padding them to the length of the longest sequence
-    in the batch. Each sample in the batch is expected to be a tuple (video_frames, label),
-    where video_frames is a tensor of shape (T, C, H, W). The function returns a padded tensor
-    of video frames with shape (batch_size, max_T, C, H, W) and a tensor of labels.
-    
-    Args:
-        batch (list): List of samples, each as (video_frames, label).
-    
-    Returns:
-        tuple: (padded_imgs, labels_tensor)
-            - padded_imgs (Tensor): Padded tensor of video frames.
-            - labels_tensor (Tensor): Tensor of labels.
-    """
+    """Stack fixed-length clips for a 3D CNN."""
     valid_samples = [
         (images, label)
         for images, label in batch
-        if len(images) > 0
+        if images.numel() > 0
     ]
 
     if not valid_samples:
         return None, None
 
     images_batch, label_batch = zip(*valid_samples)
-
-    images_tensor = torch.stack(
-        images_batch
+    images_tensor = torch.stack(images_batch)
+    images_tensor = images_tensor.transpose(1, 2)
+    labels_tensor = torch.tensor(
+        label_batch,
+        dtype=torch.long,
     )
 
+    return images_tensor, labels_tensor
+
+
+def collate_fn_rnn(batch):
+    """Stack fixed-length clips as (batch, time, channels, height, width)."""
+    valid_samples = [
+        (images, label)
+        for images, label in batch
+        if images.numel() > 0
+    ]
+
+    if not valid_samples:
+        return None, None
+
+    images_batch, label_batch = zip(*valid_samples)
+    images_tensor = torch.stack(images_batch)
     labels_tensor = torch.tensor(
         label_batch,
         dtype=torch.long,

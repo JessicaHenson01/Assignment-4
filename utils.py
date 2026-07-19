@@ -18,6 +18,12 @@ from torchvision import transforms as transforms
 from torch.utils.data import DataLoader
 from video_datasets import collate_fn_r3d_18, collate_fn_rnn
 
+import random
+import torch
+
+from torchvision.transforms import InterpolationMode
+from torchvision.transforms import functional as transform_functional
+
 # pylint: disable=no-member
 
 def get_frames(vid, n_frames=1):
@@ -112,50 +118,183 @@ def transform_stats(model='lrcn'):
         raise ValueError('model_type arg is undefined....')
     return h, w, mean, std
 
-
-def compose_data_transforms(height, width, mean, std):
+class ClipTransform:
     """
-    Compose and return data transforms for training and validation/test datasets.
+    Apply the same spatial and color augmentation to every frame.
 
-    The training transforms include data augmentation such as random horizontal flipping and random affine transformations,
-    while the validation/test transforms consist solely of resizing, converting to tensor, and normalizing.
-
-    Args:
-        height (int): Desired image height.
-        width (int): Desired image width.
-        mean (list): Mean values for normalization.
-        std (list): Standard deviation values for normalization.
-
-    Returns:
-        tuple: (train_transforms, val_test_transforms)
-            - train_transforms: Composed transforms for the training set.
-            - val_test_transforms: Composed transforms for the validation/test set.
+    This preserves temporal consistency within a video clip.
     """
-    # train_transforms = transforms.Compose([
-    #     transforms.Resize((height, width)),
-    #     transforms.RandomHorizontalFlip(p=0.5),
-    #     transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
-    #     transforms.ToTensor(),
-    #     transforms.Normalize(mean, std),
-    # ])
-    train_transforms = transforms.Compose(
-        [
-            transforms.Resize((height, width)),
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.ColorJitter(
-                brightness=0.15,
-                contrast=0.15,
-                saturation=0.1,
-            ),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
+
+    def __init__(
+        self,
+        height,
+        width,
+        mean,
+        std,
+        training=False,
+    ):
+        self.height = height
+        self.width = width
+        self.mean = mean
+        self.std = std
+        self.training = training
+
+    def __call__(self, frames):
+        """
+        Transform a list of PIL images into a tensor.
+
+        Returns:
+            Tensor shaped (T, C, H, W).
+        """
+        if not frames:
+            raise ValueError(
+                "ClipTransform received an empty frame list."
+            )
+
+        if self.training:
+            processed_frames = (
+                self._apply_training_transform(frames)
+            )
+        else:
+            processed_frames = (
+                self._apply_evaluation_transform(frames)
+            )
+
+        frame_tensors = []
+
+        for frame in processed_frames:
+            frame_tensor = (
+                transform_functional.to_tensor(frame)
+            )
+            frame_tensor = (
+                transform_functional.normalize(
+                    frame_tensor,
+                    self.mean,
+                    self.std,
+                )
+            )
+            frame_tensors.append(frame_tensor)
+
+        return torch.stack(frame_tensors)
+
+    def _apply_training_transform(self, frames):
+        """Apply one random augmentation configuration to a clip."""
+        resize_height = self.height + 32
+        resize_width = self.width + 32
+
+        resized_frames = [
+            transform_functional.resize(
+                frame,
+                [resize_height, resize_width],
+                interpolation=InterpolationMode.BILINEAR,
+                antialias=True,
+            )
+            for frame in frames
         ]
+
+        # Select one crop location for the entire clip.
+        top, left, _, _ = (
+            transforms.RandomCrop.get_params(
+                resized_frames[0],
+                output_size=(
+                    self.height,
+                    self.width,
+                ),
+            )
+        )
+
+        # Select augmentation values once per video.
+        apply_flip = random.random() < 0.5
+
+        brightness_factor = random.uniform(
+            0.85,
+            1.15,
+        )
+        contrast_factor = random.uniform(
+            0.85,
+            1.15,
+        )
+        saturation_factor = random.uniform(
+            0.90,
+            1.10,
+        )
+
+        processed_frames = []
+
+        for frame in resized_frames:
+            frame = transform_functional.crop(
+                frame,
+                top,
+                left,
+                self.height,
+                self.width,
+            )
+
+            if apply_flip:
+                frame = transform_functional.hflip(
+                    frame
+                )
+
+            frame = (
+                transform_functional.adjust_brightness(
+                    frame,
+                    brightness_factor,
+                )
+            )
+            frame = (
+                transform_functional.adjust_contrast(
+                    frame,
+                    contrast_factor,
+                )
+            )
+            frame = (
+                transform_functional.adjust_saturation(
+                    frame,
+                    saturation_factor,
+                )
+            )
+
+            processed_frames.append(frame)
+
+        return processed_frames
+
+    def _apply_evaluation_transform(self, frames):
+        """Apply deterministic resizing to a validation/test clip."""
+        return [
+            transform_functional.resize(
+                frame,
+                [self.height, self.width],
+                interpolation=InterpolationMode.BILINEAR,
+                antialias=True,
+            )
+            for frame in frames
+        ]
+
+def compose_data_transforms(
+    height,
+    width,
+    mean,
+    std,
+):
+    """
+    Create clip-consistent training and evaluation transforms.
+    """
+    train_transforms = ClipTransform(
+        height=height,
+        width=width,
+        mean=mean,
+        std=std,
+        training=True,
     )
-    val_test_transforms = transforms.Compose([
-        transforms.Resize((height, width)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean, std),
-    ])
+
+    val_test_transforms = ClipTransform(
+        height=height,
+        width=width,
+        mean=mean,
+        std=std,
+        training=False,
+    )
+
     return train_transforms, val_test_transforms
 
 

@@ -1,0 +1,14 @@
+python run.py \
+  --mode eval \
+  --frame_dir HMDB51 \
+  --n_classes 51 \
+  --model_type lrcn \
+  --cnn_backbone resnet50 \
+  --pretrained True \
+  --fr_per_vid 16 \
+  --rnn_hidden_size 256 \
+  --rnn_n_layers 2 \
+  --batch_size 1 \
+  --dropout 0.3 \
+  --learning_rate 0.00003 \
+  --ckpt models/best_resnet50_lrcn_clip_aug.pt

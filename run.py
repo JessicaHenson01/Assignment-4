@@ -171,8 +171,19 @@ def main(args):
         np.save('./splits.npy', splits)
 
         # Create PyTorch Datasets and DataLoaders for train and validation
-        tr_dataset = VideoDataset(tr_split, fr_per_vid, tr_transforms)
-        val_dataset = VideoDataset(val_split, fr_per_vid, val_ts_transforms)
+        tr_dataset = VideoDataset(
+            vid_dataset=tr_split,
+            fr_per_vid=fr_per_vid,
+            transforms=tr_transforms,
+            training=True,
+        )
+
+        val_dataset = VideoDataset(
+            vid_dataset=val_split,
+            fr_per_vid=fr_per_vid,
+            transforms=val_ts_transforms,
+            training=False,
+        )
         dataloaders = train_val_dloaders(tr_dataset, val_dataset, batch_size, model_type)
 
         # Define the loss function, optimizer, and learning rate scheduler
@@ -236,7 +247,13 @@ def main(args):
         ts_split = [(sample[0], int(sample[1])) for sample in ts_split]
 
         # Create PyTorch Dataset and DataLoader for the test set
-        ts_dataset = VideoDataset(ts_split, fr_per_vid, val_ts_transforms)
+        ts_dataset = VideoDataset(
+            vid_dataset=ts_split,
+            fr_per_vid=fr_per_vid,
+            transforms=val_ts_transforms,
+            training=False,
+            multi_clip_eval=True,
+        )
         dataloaders = test_dloaders(ts_dataset, batch_size, model_type)
 
         # Load the trained model checkpoint

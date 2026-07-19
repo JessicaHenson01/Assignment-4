@@ -47,7 +47,40 @@ def test(model, dataloader, device, criterion):
             x_batch = x_batch.to(device)
             y_batch = y_batch.to(device)
 
-            logits = model(x_batch)
+            # Multi-clip input:
+            # (batch, views, frames, channels, height, width)
+            if x_batch.ndim == 6:
+                (
+                    batch_size,
+                    number_of_views,
+                    frame_count,
+                    channels,
+                    height,
+                    width,
+                ) = x_batch.shape
+
+                flattened_clips = x_batch.reshape(
+                    batch_size * number_of_views,
+                    frame_count,
+                    channels,
+                    height,
+                    width,
+                )
+
+                view_logits = model(flattened_clips)
+
+                view_logits = view_logits.reshape(
+                    batch_size,
+                    number_of_views,
+                    -1,
+                )
+
+                # Average the predictions from beginning, middle, and end.
+                logits = view_logits.mean(dim=1)
+
+            else:
+                # Keep supporting ordinary single-clip evaluation.
+                logits = model(x_batch)
 
             loss = criterion(logits, y_batch)
             running_loss += loss.item() * x_batch.size(0)

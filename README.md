@@ -1,6 +1,6 @@
 # Assignment 4: Video Action Recognition with HMDB51
 
-This repository contains the completed code for Assignment 4 in Deep Learning with PyTorch. The project repairs an inherited video-classification codebase and trains a Long-term Recurrent Convolutional Network (LRCN) on the HMDB51 human-action dataset.
+This repository contains the completed code for Assignment 4 in Deep Learning with PyTorch. The project fixes an video-classification codebase and trains a Long-term Recurrent Convolutional Network (LRCN) on the HMDB51 human-action dataset.
 
 The final submitted model uses a pretrained ResNet-50 backbone, a two-layer bidirectional LSTM, temporal attention, and multi-clip evaluation.
 
@@ -29,9 +29,9 @@ The fix:
 - Processed all frames through the CNN in one vectorized operation.
 - Selected temporal outputs using the correct batch-first indexing.
 
-### 2. Test-Set Leakage Risk
+### 2. Test-Set Leakage
 
-The inherited training workflow created train, validation, and test datasets and DataLoaders together. This made the held-out test set available inside the training workflow.
+The training workflow created train, validation, and test datasets and DataLoaders together. This made the held-out test set available inside the training workflow.
 
 The fix:
 
@@ -44,7 +44,7 @@ The fix:
 
 ### 1. Stronger ResNet Backbone
 
-The original configuration used a smaller ResNet backbone. The final model uses an ImageNet-pretrained ResNet-50 to extract stronger spatial features from each frame.
+The configuration used a smaller ResNet backbone. The final model uses an ImageNet-pretrained ResNet-50 to extract stronger spatial features from each frame.
 
 The earlier ResNet layers are frozen while later layers are fine-tuned using smaller learning rates.
 
@@ -75,7 +75,7 @@ Temporal attention allows the model to assign more weight to informative moments
 
 ## Dataset
 
-The project uses the HMDB51 dataset, which contains 51 human-action categories.
+The project uses the HMDB51 dataset, which contains 51 categories.
 
 The code expects pre-extracted frames organized as:
 
@@ -98,7 +98,7 @@ The dataset itself is not included in this repository.
 
 ## Environment Setup
 
-A Conda environment is recommended.
+A Conda environment is what I used.
 
 ```bash
 conda create -n assignment4 python=3.12

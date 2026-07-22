@@ -3,7 +3,7 @@ torchvision
 opencv-python
 scikit-learn
 tqdm
-numpy
+numpy<2
 Pillow
 pylint
 wandb

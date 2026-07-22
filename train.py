@@ -58,14 +58,16 @@ def train(dataloaders, model, criterion, optimizer, scheduler, device, optim_mod
 
         # Training phase
         model.train()
-        model.base_model.conv1.eval()
-        model.base_model.bn1.eval()
-        model.base_model.layer1.eval()
-        model.base_model.layer2.eval()
 
+        # Freeze BatchNorm statistics in the pretrained portions.
+        model.base_model.eval()
+
+        # Both architectures fine-tune layer3.
         model.base_model.layer3.train()
-        model.base_model.layer4.train()
-        model.base_model.layer4.train()
+
+        # Only LRCN uses and fine-tunes layer4.
+        if hasattr(model, "rnn"):
+            model.base_model.layer4.train()
         train_loss, train_accuracy = get_epoch_loss(model, criterion, dataloaders['train'], device, optimizer)
         loss_hist['train'].append(train_loss)
         acc_hist['train'].append(train_accuracy)

@@ -35,7 +35,7 @@ import wandb
 
 from video_datasets import VideoDataset, load_dataset, dataset_split
 from utils import transform_stats, compose_data_transforms, train_val_dloaders, test_dloaders
-from models import LRCN
+from models import LRCN, SlowFusion3D
 from train import train
 from test import test, get_test_report, get_confusion_matrix
 
@@ -145,19 +145,48 @@ def main(args):
     tr_transforms, val_ts_transforms = compose_data_transforms(h, w, mean, std)
 
     # Initialize the model (LRCN)
-    model = LRCN(hidden_size=rnn_hidden_size, n_layers=rnn_n_layers, dropout_rate=dropout,
-                 n_classes=n_classes, pretrained=pretrained, cnn_model=cnn_backbone)
+    if model_type == "lrcn":
+        model = LRCN(
+            hidden_size=rnn_hidden_size,
+            n_layers=rnn_n_layers,
+            dropout_rate=dropout,
+            n_classes=n_classes,
+            pretrained=pretrained,
+            cnn_model=cnn_backbone,
+        )
+
+    elif model_type == "slow_fusion":
+        model = SlowFusion3D(
+            n_classes=n_classes,
+            dropout_rate=dropout,
+            pretrained=pretrained,
+            cnn_model=cnn_backbone,
+        )
+
+    else:
+        raise ValueError(
+            "model_type must be 'lrcn' or 'slow_fusion'."
+        )
     
-    # Freeze the complete pretrained backbone first.
-    for parameter in model.base_model.parameters():
-        parameter.requires_grad = False
+    if model_type == "slow_fusion":
+        # Freeze the complete ImageNet backbone first.
+        for parameter in model.base_model.parameters():
+            parameter.requires_grad = False
 
-    # Fine-tune the final two ResNet stages.
-    for parameter in model.base_model.layer3.parameters():
-        parameter.requires_grad = True
+        # Fine-tune layer3, which supplies feature maps to Conv3d.
+        for parameter in model.base_model.layer3.parameters():
+            parameter.requires_grad = True
 
-    for parameter in model.base_model.layer4.parameters():
-        parameter.requires_grad = True
+    else:
+        # Existing LRCN freezing strategy.
+        for parameter in model.base_model.parameters():
+            parameter.requires_grad = False
+
+        for parameter in model.base_model.layer3.parameters():
+            parameter.requires_grad = True
+
+        for parameter in model.base_model.layer4.parameters():
+            parameter.requires_grad = True
 
     if mode == 'train':
         # Load dataset and split into train/validation/test
@@ -192,31 +221,55 @@ def main(args):
             label_smoothing=0.1,
         )
 
-        opt = optim.AdamW(
-            [
-                {
-                    "params": model.base_model.layer3.parameters(),
-                    "lr": 3e-6,
-                },
-                {
-                    "params": model.base_model.layer4.parameters(),
-                    "lr": 1e-5,
-                },
-                {
-                    "params": model.rnn.parameters(),
-                    "lr": 5e-5,
-                },
-                {
-                    "params": model.attention.parameters(),
-                    "lr": 5e-5,
-                },
-                {
-                    "params": model.fc.parameters(),
-                    "lr": 1e-4,
-                },
-            ],
-            weight_decay=1e-4,
-        )
+        if model_type == "slow_fusion":
+            opt = optim.AdamW(
+                [
+                    {
+                        "params": model.base_model.layer3.parameters(),
+                        "lr": 3e-6,
+                    },
+                    {
+                        "params": model.channel_projection.parameters(),
+                        "lr": 3e-5,
+                    },
+                    {
+                        "params": model.spatiotemporal_block.parameters(),
+                        "lr": 3e-5,
+                    },
+                    {
+                        "params": model.classifier.parameters(),
+                        "lr": 1e-4,
+                    },
+                ],
+                weight_decay=1e-4,
+            )
+
+        else:
+            opt = optim.AdamW(
+                [
+                    {
+                        "params": model.base_model.layer3.parameters(),
+                        "lr": 3e-6,
+                    },
+                    {
+                        "params": model.base_model.layer4.parameters(),
+                        "lr": 1e-5,
+                    },
+                    {
+                        "params": model.rnn.parameters(),
+                        "lr": 5e-5,
+                    },
+                    {
+                        "params": model.attention.parameters(),
+                        "lr": 5e-5,
+                    },
+                    {
+                        "params": model.fc.parameters(),
+                        "lr": 1e-4,
+                    },
+                ],
+                weight_decay=1e-4,
+            )
 
         lr_scheduler = ReduceLROnPlateau(opt, mode='min', factor=0.5, patience=5) #, verbose=1
         os.makedirs("./models", exist_ok=True)

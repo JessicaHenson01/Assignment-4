@@ -4,12 +4,11 @@ python run.py \
   --frame_dir HMDB51 \
   --n_classes 51 \
   --batch_size 4 \
-  --model_type lrcn \
+  --model_type slow_fusion \
   --cnn_backbone resnet50 \
   --pretrained True \
   --fr_per_vid 16 \
-  --rnn_hidden_size 256 \
   --rnn_n_layers 2 \
-  --dropout 0.3 \
+  --dropout 0.4 \
   --learning_rate 0.00003 \
   --n_epochs 30

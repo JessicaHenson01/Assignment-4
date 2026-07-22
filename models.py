@@ -209,3 +209,176 @@ class LRCN(nn.Module):
         video_features = self.dropout(video_features)
 
         return self.fc(video_features)
+    
+class SlowFusion3D(nn.Module):
+    """
+    ResNet spatial feature extractor followed by 3D convolutions.
+
+    ResNet processes each frame through layer3 while preserving its
+    spatial feature map. The 3D convolution block then learns joint
+    temporal and spatial features before classification.
+    """
+
+    def __init__(
+        self,
+        n_classes,
+        dropout_rate=0.4,
+        pretrained=True,
+        cnn_model="resnet50",
+    ):
+        super().__init__()
+
+        # Reuse the ResNet-construction function from LRCN.
+        base_cnn = LRCN._create_backbone(
+            cnn_model=cnn_model,
+            pretrained=pretrained,
+        )
+
+        # layer3 has half as many output channels as the complete
+        # ResNet feature vector:
+        # ResNet-50: 1024
+        # ResNet-34: 256
+        layer3_channels = (
+            base_cnn.fc.in_features // 2
+        )
+
+        self.base_model = base_cnn
+
+        # Reduce the large ResNet feature map before the expensive
+        # three-dimensional convolutions.
+        self.channel_projection = nn.Sequential(
+            nn.Conv3d(
+                in_channels=layer3_channels,
+                out_channels=64,
+                kernel_size=1,
+                bias=False,
+            ),
+            nn.GroupNorm(
+                num_groups=8,
+                num_channels=64,
+            ),
+            nn.GELU(),
+        )
+
+        # Joint convolution over:
+        # time × height × width.
+        self.spatiotemporal_block = nn.Sequential(
+            nn.Conv3d(
+                in_channels=64,
+                out_channels=128,
+                kernel_size=(3, 3, 3),
+                padding=1,
+                bias=False,
+            ),
+            nn.GroupNorm(
+                num_groups=8,
+                num_channels=128,
+            ),
+            nn.GELU(),
+
+            # Preserve time while reducing spatial dimensions.
+            nn.MaxPool3d(
+                kernel_size=(1, 2, 2),
+            ),
+
+            nn.Conv3d(
+                in_channels=128,
+                out_channels=256,
+                kernel_size=(3, 3, 3),
+                padding=1,
+                bias=False,
+            ),
+            nn.GroupNorm(
+                num_groups=16,
+                num_channels=256,
+            ),
+            nn.GELU(),
+
+            # Produce one feature vector for the full video.
+            nn.AdaptiveAvgPool3d(
+                output_size=(1, 1, 1),
+            ),
+        )
+
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(
+                256,
+                n_classes,
+            ),
+        )
+
+    def forward(self, input_tensor):
+        """
+        Perform a slow-fusion forward pass.
+
+        Args:
+            input_tensor:
+                Video tensor shaped
+                (batch, time, channels, height, width).
+
+        Returns:
+            Classification logits shaped
+            (batch, n_classes).
+        """
+        (
+            batch_size,
+            time_steps,
+            channels,
+            height,
+            width,
+        ) = input_tensor.shape
+
+        # Process all frames with ResNet in one operation.
+        frames = input_tensor.reshape(
+            batch_size * time_steps,
+            channels,
+            height,
+            width,
+        )
+
+        # Run ResNet only through layer3. Do not use layer4,
+        # global average pooling, or the ImageNet classifier.
+        features = self.base_model.conv1(frames)
+        features = self.base_model.bn1(features)
+        features = self.base_model.relu(features)
+        features = self.base_model.maxpool(features)
+        features = self.base_model.layer1(features)
+        features = self.base_model.layer2(features)
+        features = self.base_model.layer3(features)
+
+        (
+            _,
+            feature_channels,
+            feature_height,
+            feature_width,
+        ) = features.shape
+
+        # Restore the temporal dimension.
+        features = features.reshape(
+            batch_size,
+            time_steps,
+            feature_channels,
+            feature_height,
+            feature_width,
+        )
+
+        # Conv3d expects:
+        # (batch, channels, time, height, width)
+        features = features.permute(
+            0,
+            2,
+            1,
+            3,
+            4,
+        ).contiguous()
+
+        features = self.channel_projection(
+            features
+        )
+        features = self.spatiotemporal_block(
+            features
+        )
+
+        return self.classifier(features)

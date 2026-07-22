@@ -106,7 +106,7 @@ def transform_stats(model='lrcn'):
     Raises:
         ValueError: If an undefined model type is provided.
     """
-    if model == 'lrcn':
+    if model in {"lrcn", "slow_fusion"}:
         h, w = 224, 224
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
@@ -315,7 +315,7 @@ def train_val_dloaders(train_dataset, val_dataset, batch_size, model='lrcn'):
     Returns:
         dict: Dictionary with keys 'train' and 'val' mapping to their respective DataLoaders.
     """
-    if model == "lrcn":
+    if model in {"lrcn", "slow_fusion"}:
         train_dl = DataLoader(train_dataset, batch_size=batch_size,
                               shuffle=True, collate_fn=collate_fn_rnn)
         val_dl = DataLoader(val_dataset, batch_size=2 * batch_size,
@@ -344,7 +344,7 @@ def test_dloaders(test_dataset, batch_size, model='lrcn'):
     Returns:
         dict: Dictionary with key 'test' mapping to the test DataLoader.
     """
-    if model == "lrcn":
+    if model in {"lrcn", "slow_fusion"}:
         test_dl = DataLoader(test_dataset, batch_size=2 * batch_size,
                              shuffle=False, collate_fn=collate_fn_rnn)
     else:

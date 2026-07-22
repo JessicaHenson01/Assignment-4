@@ -254,5 +254,3 @@ conda activate assignment4
 bash train.sh
 bash eval.sh
 ```
-
-For reproducibility, keep the generated `splits.npy` from training when evaluating the corresponding checkpoint.

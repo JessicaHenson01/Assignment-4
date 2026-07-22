@@ -1,190 +1,258 @@
-# Video Classification with HMDB51
+# Assignment 4: Video Action Recognition with HMDB51
 
-This project implements a video classification pipeline using the HMDB51 dataset. It leverages a Long-term Recurrent Convolutional Network (LRCN) model that extracts spatial features from individual video frames via a ResNet backbone and learns temporal dynamics through an LSTM. The project includes scripts for preprocessing, training, and testing the model.
+This repository contains the completed code for Assignment 4 in Deep Learning with PyTorch. The project repairs an inherited video-classification codebase and trains a Long-term Recurrent Convolutional Network (LRCN) on the HMDB51 human-action dataset.
 
----
+The final submitted model uses a pretrained ResNet-50 backbone, a two-layer bidirectional LSTM, temporal attention, and multi-clip evaluation.
 
-## Table of Contents
+## Final Results
 
-- [Dataset Preparation](#dataset-preparation)
-- [Environment Setup](#environment-setup)
-- [Preprocessing and Frame Extraction](#preprocessing-and-frame-extraction)
-- [Training the Model](#training-the-model)
-- [Testing and Evaluation](#testing-and-evaluation)
-- [Project Structure](#project-structure)
-- [Customization and Hyperparameters](#customization-and-hyperparameters)
+| Metric | Result |
+|---|---:|
+| Best validation accuracy | 72.54% |
+| Test accuracy | Approximately 72% |
+| Test loss | Approximately 1.60 |
+| Number of classes | 51 |
+| Frames per clip | 16 |
 
----
+The final evaluation averages predictions from beginning, middle, and ending temporal views of each test video.
 
-## Dataset Preparation
+## Errors Found and Fixed
 
-### Step 0: Download and Unzip Dataset
+### 1. LSTM Dimension Bug
 
-1. **Download Dataset:**  
-   Download the HMDB51 dataset from [Kaggle](https://www.kaggle.com/datasets/easonlll/hmdb51). This dataset contains videos of 51 different human action classes.
+The inherited model passed tensors shaped `(batch, time, features)` into an LSTM that used PyTorch's default `batch_first=False` behavior. As a result, the batch dimension could be interpreted as the temporal dimension.
 
-2. **Unzip and Organize:**  
-   Unzip the downloaded dataset. The expected folder structure should be as follows:
-   
-        - HMDB51
-            - Action_Class1
-            - Action_Class2
-            ... ... ... ...
-            - Action_Class51
+The fix:
 
-Each subdirectory represents a different action class.
+- Enabled `batch_first=True`.
+- Reshaped frame features explicitly to `(batch, time, features)`.
+- Processed all frames through the CNN in one vectorized operation.
+- Selected temporal outputs using the correct batch-first indexing.
 
----
+### 2. Test-Set Leakage Risk
+
+The inherited training workflow created train, validation, and test datasets and DataLoaders together. This made the held-out test set available inside the training workflow.
+
+The fix:
+
+- Training now creates only train and validation DataLoaders.
+- The test split is saved to `splits.npy`.
+- Test data is loaded only when running explicit evaluation.
+- Assertions verify that train, validation, and test video paths are disjoint.
+
+## Model-Level Improvements
+
+### 1. Stronger ResNet Backbone
+
+The original configuration used a smaller ResNet backbone. The final model uses an ImageNet-pretrained ResNet-50 to extract stronger spatial features from each frame.
+
+The earlier ResNet layers are frozen while later layers are fine-tuned using smaller learning rates.
+
+### 2. Bidirectional LSTM with Temporal Attention
+
+The temporal model was expanded to:
+
+- Two LSTM layers.
+- Bidirectional sequence processing.
+- Hidden size of 256.
+- Temporal attention over all frame-level LSTM outputs.
+- Dropout regularization before classification.
+
+Temporal attention allows the model to assign more weight to informative moments instead of using only the final LSTM output.
+
+## Additional Improvements
+
+- Clip-consistent augmentation applies the same crop, flip, and color transformation to every frame in a clip.
+- Random temporal-segment sampling is used during training.
+- Deterministic uniform sampling is used for validation and ordinary evaluation.
+- Beginning, middle, and ending clip predictions are averaged during final evaluation.
+- Frame files are numerically sorted.
+- Short clips repeat real frames rather than introducing black padding.
+- Empty frame directories are skipped.
+- Training, validation, and test metrics are logged to Weights & Biases.
+- The best checkpoint is selected using validation accuracy.
+- Gradient clipping and learning-rate scheduling are used during training.
+
+## Dataset
+
+The project uses the HMDB51 dataset, which contains 51 human-action categories.
+
+The code expects pre-extracted frames organized as:
+
+```text
+HMDB51/
+├── brush_hair/
+│   ├── video_1/
+│   │   ├── frame0.jpg
+│   │   ├── frame1.jpg
+│   │   └── ...
+│   └── ...
+├── cartwheel/
+├── catch/
+└── ...
+```
+
+Each action directory contains one directory per video, and each video directory contains extracted JPEG frames.
+
+The dataset itself is not included in this repository.
 
 ## Environment Setup
 
-1. **Python Version:**  
-This project requires Python 3.7 or higher.
-
-2. **Dependencies:**  
-Install the required Python packages by running:
+A Conda environment is recommended.
 
 ```bash
-pip install -r requirements.txt
+conda create -n assignment4 python=3.12
+conda activate assignment4
+python -m pip install -r requirements.txt
+```
 
-# Key Libraries
-
-- **PyTorch**
-- **torchvision**
-- **OpenCV**
-- **scikit-learn**
-- **tqdm**
-- **numpy**
-- **Pillow**
-
-## Hardware Requirements
-
-A CUDA-enabled GPU is recommended for training. The code automatically detects GPU availability.
-
----
-
-## Preprocessing and Frame Extraction
-
-Before training, the raw video files must be converted into frame sequences. The preprocessing module includes functions for:
-
-### Uniform Frame Sampling
-
-- The `get_frames` function uses OpenCV to sample a fixed number of frames per video.
-
-### Saving Frames to Disk
-
-- The `store_frames` function writes the extracted frames as JPEG images.
-
-Integrate these functions into a preprocessing script (e.g., `preprocess.py`) to convert all videos into folders of extracted frames. The resulting folder structure should mirror the original dataset structure:
-
-
----
-
-## Training the Model
-
-### Step 1: Run Training
-
-#### Configure Training Parameters
-
-The training is managed via a bash script (e.g., `train.sh`) that calls the main training module.  
-**Important:** Update the `--frame_dir` argument in the script to point to the directory where your preprocessed frame data is stored. You can also adjust other parameters (e.g., number of frames per video, batch size, learning rate) to see how they affect the experiment.
-
-#### Run the Training Script
-
-Execute the training script from your terminal:
+On systems that encounter binary compatibility errors between NumPy, SciPy, and scikit-learn, install NumPy 1.26:
 
 ```bash
+python -m pip install --force-reinstall \
+  "numpy==1.26.4" \
+  "scipy==1.17.1" \
+  "scikit-learn==1.9.0"
+```
+
+Confirm the environment before running:
+
+```bash
+which python
+
+python -c "import torch, numpy, scipy, sklearn; \
+print('Torch:', torch.__version__); \
+print('NumPy:', numpy.__version__); \
+print('SciPy:', scipy.__version__); \
+print('scikit-learn:', sklearn.__version__)"
+```
+
+The code supports CUDA, Apple Metal Performance Shaders (MPS), and CPU execution. Training on CPU will be considerably slower.
+
+## Final Model Configuration
+
+```text
+Model type:             LRCN
+CNN backbone:           ResNet-50
+CNN pretraining:        ImageNet
+Frames per video:       16
+LSTM hidden size:       256
+LSTM layers:            2
+Bidirectional LSTM:     Yes
+Temporal attention:     Yes
+Dropout:                0.3
+Number of classes:      51
+Training batch size:    4
+Evaluation batch size:  1
+Epochs:                 30
+```
+
+## Training
+
+Activate the project environment and make sure the extracted `HMDB51` directory is in the repository root or update `--frame_dir` in `train.sh`.
+
+```bash
+conda activate assignment4
 bash train.sh
+```
 
-## During Training, the Script Will:
+Training performs the following steps:
 
-- **Load the frame dataset.**
-- **Split the dataset** into training, validation, and test sets using stratified sampling.
-- **Apply data augmentation** techniques (resizing, random flips, affine transformations).
-- **Create custom PyTorch Datasets and DataLoaders.**
-- **Initialize the LRCN model** using a specified ResNet backbone.
-- **Set up the loss function, optimizer, and learning rate scheduler.**
-- **Run the training loop** while tracking loss and accuracy, saving the best model weights.
+1. Loads all nonempty video-frame directories.
+2. Creates stratified train, validation, and test splits.
+3. Saves the fixed splits to `splits.npy`.
+4. Verifies that all three splits are disjoint.
+5. Trains using the train split.
+6. Selects the best checkpoint using validation accuracy.
+7. Logs training and validation metrics to Weights & Biases.
 
----
+The saved checkpoint is written under the `models/` directory.
 
-## Testing and Evaluation
+## Evaluation
 
-### Step 2: Run Testing
+The final evaluation script expects:
 
-- **Configure Testing Parameters:**  
-  Update the `--ckpt` argument in your testing script (e.g., `test.sh`) to point to the saved best model weights generated during training.
+```text
+models/best_resnet50_lrcn_clip_aug.pt
+```
 
-- **Run the Testing Script:**  
-  Execute the testing script from your terminal:
-  
+Run:
+
 ```bash
-bash test.sh
-## Testing Script Overview
+conda activate assignment4
+bash eval.sh
+```
 
-The testing script will:
+Evaluation:
 
-- **Load the dataset splits** (previously saved during training).
-- **Create a DataLoader for the test set.**
-- **Load the trained model checkpoint.**
-- **Evaluate the model** on the test data by computing overall accuracy, generating classification reports, and optionally producing confusion matrices.
+- Loads the previously saved test split.
+- Loads the ResNet-50 LRCN checkpoint.
+- Samples beginning, middle, and ending views.
+- Averages the three model-logit tensors.
+- Reports test loss and overall accuracy.
+- Logs test metrics to Weights & Biases.
 
----
+Model checkpoints are excluded from Git because of their file size. Place the trained checkpoint in `models/` before running evaluation.
 
-## Customization and Hyperparameters
+## Weights & Biases
 
-You can modify several parameters to experiment with different settings:
+Training, validation, and test metrics are logged to the project:
 
-### Data Parameters
+[Assignment 4 Video Action Recognition](https://wandb.ai/jhenso13-johns-hopkins-university/assignment-4-video-action-recognition)
 
-- `--frame_dir`: Path to your preprocessed frames.
-- `--fr_per_vid`: Number of frames to sample per video.
+The best 30-epoch ResNet-50 LRCN training run was logged as `noble-fog-9`.
 
-### Model Parameters
+## Code Quality
 
-- `--model_type`: Choose between `'lrcn'` (default) or other supported models.
-- `--cnn_backbone`: Options include `resnet18`, `resnet34`, `resnet50`, `resnet101`, or `resnet152`.
-- `--rnn_hidden_size` and `--rnn_n_layers`: Configure the LSTM network.
+Run Pylint across the Python source files with:
 
-### Training Parameters
+```bash
+python -m pylint \
+  models.py \
+  run.py \
+  run_training.py \
+  test.py \
+  train.py \
+  utils.py \
+  video_datasets.py
+```
 
-- `--batch_size`, `--learning_rate`, `--n_epochs`, and `--dropout` control the training dynamics.
-- `--train_size` and `--test_size` determine dataset splits.
+Generated files, local datasets, model checkpoints, Python caches, and local Weights & Biases files should not be committed.
 
-By tweaking these parameters, you can study their impact on model performance and experiment with different network configurations.
+## Project Structure
 
----
+```text
+.
+├── README.md
+├── eval.sh
+├── models.py
+├── requirements.txt
+├── run.py
+├── run_training.py
+├── test.py
+├── train.py
+├── train.sh
+├── utils.py
+└── video_datasets.py
+```
 
-## Summary of Steps
+### Main Files
 
-- **Step 0: Dataset Preparation**  
-  Download, unzip, and organize the HMDB51 dataset into subdirectories by action class.
+- `models.py`: ResNet-LSTM-attention model definition.
+- `video_datasets.py`: Dataset loading, temporal sampling, and split utilities.
+- `utils.py`: Transform, DataLoader, frame-extraction, and metric utilities.
+- `train.py`: Training and validation loop.
+- `test.py`: Single-clip and three-view evaluation.
+- `run.py`: Main training and evaluation entry point.
+- `train.sh`: Final training configuration.
+- `eval.sh`: Final evaluation configuration.
 
-- **Step 1: Run Training**  
-  Execute `train.sh` after configuring the `--frame_dir` and other hyperparameters to train the model.
+## Reproducing the Final Experiment
 
-- **Step 2: Run Testing**  
-  Execute `test.sh` after updating the `--ckpt` argument to point to the best model checkpoint to evaluate the model.
+```bash
+conda activate assignment4
+bash train.sh
+bash eval.sh
+```
 
-Happy Training!
-
-(assignment4) jessicahenson@Jessicas-MacBook-Pro-2 Assignment 4 - Video Action Recognition % python run.py \
-  --mode eval \
-  --frame_dir HMDB51 \
-  --n_classes 51 \
-  --batch_size 4 \
-  --model_type lrcn \
-  --cnn_backbone resnet34 \
-  --pretrained True \
-  --fr_per_vid 16 \
-  --rnn_hidden_size 100 \
-  --rnn_n_layers 1 \
-  --dropout 0.1 \
-  --ckpt models/best_model_wts.pt
-Using device: mps
-/opt/homebrew/anaconda3/envs/assignment4/lib/python3.12/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
-  warnings.warn(
-/opt/homebrew/anaconda3/envs/assignment4/lib/python3.12/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=ResNet34_Weights.IMAGENET1K_V1`. You can also use `weights=ResNet34_Weights.DEFAULT` to get the most up-to-date weights.
-  warnings.warn(msg)
-100%|███████████████████████████████████████████| 127/127 [00:50<00:00,  2.50it/s]
-The overall test accuracy is 68.8670%.
+For reproducibility, keep the generated `splits.npy` from training when evaluating the corresponding checkpoint.

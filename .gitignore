@@ -4,3 +4,16 @@ wandb/
 .DS_Store
 *.pt
 HMDB51/
+# Generated Python files
+__pycache__/
+*.py[cod]
+
+# Experiment logs
+wandb/
+
+# Datasets and checkpoints
+HMDB51/
+*.pt
+
+# macOS files
+.DS_Store
